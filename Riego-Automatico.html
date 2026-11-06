@@ -1,0 +1,181 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Control Huerto ESP32</title>
+    <style>
+        body { margin: 0; font-family: Arial, sans-serif; background: #071426; color: white; }
+        .contenedor { width: 90%; max-width: 850px; margin: 25px auto; background: #10233d; padding: 25px; border-radius: 20px; box-shadow: 0 0 25px rgba(0,0,0,0.5); }
+        h1 { text-align: center; margin-bottom: 25px; }
+        .sensores { display: flex; gap: 15px; flex-wrap: wrap; }
+        .sensor { flex: 1; min-width: 200px; background: #193454; padding: 20px; border-radius: 15px; text-align: center; }
+        .sensor h2 { margin-top: 0; }
+        .valor { font-size: 30px; font-weight: bold; margin-top: 10px; }
+        #humedadBox { transition: 0.3s; }
+        .humedadVerde { background: #0b8f3c !important; box-shadow: 0 0 20px rgba(0,255,100,0.6); }
+        .humedadRoja { background: #b51c28 !important; box-shadow: 0 0 20px rgba(255,50,50,0.7); }
+        .estado { margin-top: 20px; padding: 20px; border-radius: 15px; text-align: center; background: #193454; }
+        #estadoBomba { font-size: 25px; font-weight: bold; }
+        .encendida { color: #00ff73; }
+        .apagada { color: #ff5555; }
+        .botones { display: flex; justify-content: center; gap: 15px; margin-top: 20px; flex-wrap: wrap; }
+        button { border: none; padding: 13px 25px; border-radius: 10px; font-size: 16px; font-weight: bold; cursor: pointer; }
+        .auto { background: #238636; color: white; }
+        .manual { background: #6f42c1; color: white; }
+        .encender { background: #00a86b; color: white; }
+        .apagar { background: #d32f2f; color: white; }
+        button:hover { opacity: 0.8; }
+        #panelManual { display: none; margin-top: 20px; text-align: center; }
+        .grafica { margin-top: 25px; background: #193454; padding: 20px; border-radius: 15px; }
+        canvas { width: 100%; height: 260px; background: #0b192b; border-radius: 10px; }
+    </style>
+</head>
+<body>
+
+<div class="contenedor">
+    <h1>🌱 Control Huerto ESP32</h1>
+
+    <div class="sensores">
+        <div class="sensor">
+            <h2>Tanque (Aire)</h2>
+            <div class="valor"><span id="distancia">--</span> cm</div>
+        </div>
+
+        <div class="sensor" id="humedadBox">
+            <h2>Humedad Suelo</h2>
+            <div class="valor"><span id="humedad">--</span> %</div>
+        </div>
+    </div>
+
+    <div class="estado">
+        <h2>Estado de la bomba</h2>
+        <div id="estadoBomba" class="apagada">BOMBA APAGADA</div>
+    </div>
+
+    <div class="botones">
+        <button class="auto" onclick="modoAuto()">AUTOMÁTICO (&lt;30%)</button>
+        <button class="manual" onclick="pedirClave()">MANUAL</button>
+    </div>
+
+    <div id="panelManual">
+        <h3>Control Manual</h3>
+        <button class="encender" onclick="bomba(1)">ENCENDER</button>
+        <button class="apagar" onclick="bomba(0)">APAGAR</button>
+    </div>
+
+    <div class="grafica">
+        <h2>Pulsos de funcionamiento de la bomba</h2>
+        <canvas id="pumpGraph"></canvas>
+    </div>
+</div>
+
+<script>
+let datosGrafica = [];
+
+function pedirClave() {
+    let clave = prompt("Ingrese la clave para modo MANUAL:");
+    if (clave === "0723") {
+        fetch("/setModo?val=manual")
+        .then(() => {
+            document.getElementById("panelManual").style.display = "block";
+        });
+    } else {
+        if (clave !== null) { alert("Clave incorrecta"); }
+    }
+}
+
+function modoAuto() {
+    fetch("/setModo?val=auto")
+    .then(() => {
+        document.getElementById("panelManual").style.display = "none";
+    });
+}
+
+function bomba(valor) {
+    fetch("/setBomba?val=" + valor);
+}
+
+function actualizar() {
+    fetch("/status")
+    .then(response => response.json())
+    .then(data => {
+        document.getElementById("distancia").innerText = data.distancia < 0 ? "--" : data.distancia.toFixed(1);
+        document.getElementById("humedad").innerText = data.humedad;
+
+        let caja = document.getElementById("humedadBox");
+        if (data.humedad >= 30) {
+            caja.classList.remove("humedadRoja");
+            caja.classList.add("humedadVerde");
+        } else {
+            caja.classList.remove("humedadVerde");
+            caja.classList.add("humedadRoja");
+        }
+
+        let estado = document.getElementById("estadoBomba");
+        if (data.bomba) {
+            estado.innerText = "BOMBA ENCENDIDA";
+            estado.className = "encendida";
+        } else {
+            estado.innerText = "BOMBA APAGADA";
+            estado.className = "apagada";
+        }
+
+        datosGrafica = data.grafica;
+        dibujarGrafica();
+    });
+}
+
+function dibujarGrafica() {
+    let canvas = document.getElementById("pumpGraph");
+    let ctx = canvas.getContext("2d");
+    canvas.width = canvas.clientWidth;
+    canvas.height = canvas.clientHeight;
+    let w = canvas.width, h = canvas.height;
+    ctx.clearRect(0, 0, w, h);
+
+    ctx.strokeStyle = "white";
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.moveTo(45, 15);
+    ctx.lineTo(45, h - 35);
+    ctx.lineTo(w - 10, h - 35);
+    ctx.stroke();
+
+    ctx.fillStyle = "white";
+    ctx.font = "13px Arial";
+    ctx.fillText("1", 25, 30);
+    ctx.fillText("0", 25, h - 35);
+
+    if (datosGrafica.length < 1) return;
+
+    let maxTiempo = datosGrafica[datosGrafica.length - 1].tiempo;
+    if (maxTiempo < 10) maxTiempo = 10;
+
+    ctx.strokeStyle = "#00d9ff";
+    ctx.lineWidth = 3;
+    ctx.beginPath();
+
+    for (let i = 0; i < datosGrafica.length; i++) {
+        let punto = datosGrafica[i];
+        let x = 45 + ((punto.tiempo / maxTiempo) * (w - 60));
+        let y = punto.estado == 1 ? 30 : h - 35;
+
+        if (i == 0) {
+            ctx.moveTo(x, y);
+        } else {
+            let anterior = datosGrafica[i - 1];
+            let yAnterior = anterior.estado == 1 ? 30 : h - 35;
+            ctx.lineTo(x, yAnterior);
+            ctx.lineTo(x, y);
+        }
+    }
+    ctx.stroke();
+}
+
+setInterval(actualizar, 500);
+actualizar();
+</script>
+
+</body>
+</html>
